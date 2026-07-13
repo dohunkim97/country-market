@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f8fa;
+  --foreground: #111827;
+}
+
+@theme inline {
+  --color-page: #f7f8fa;
+  --color-surface: #ffffff;
+
+  --color-border: #e5e7eb;
+  --color-border-hairline: #f1f2f4;
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-secondary-2: #374151;
+  --color-text-tertiary: #6b7280;
+  --color-text-muted: #9ca3af;
+
+  --color-brand: #2563eb;
+  --color-brand-bg: #eff6ff;
+
+  --color-urgent: #dc2626;
+  --color-urgent-bg: #fef2f2;
+  --color-urgent-border: #fee2e2;
+
+  --color-success: #16a34a;
+  --color-success-bg: #f0fdf4;
+
+  --color-neutral: #6b7280;
+  --color-neutral-bg: #f3f4f6;
+
+  --font-sans: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+input,
+select,
+button {
+  font-family: inherit;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

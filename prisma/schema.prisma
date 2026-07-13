@@ -1,0 +1,108 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Company {
+  id               String    @id @default(cuid())
+  name             String
+  alertEmail       String?
+  emailConnected   Boolean   @default(false)
+  webhookUrl       String?
+  webhookConnected Boolean   @default(false)
+
+  // 알림 조건
+  scoreThreshold   Float     @default(0.7)
+  reminderD7       Boolean   @default(true)
+  reminderD3       Boolean   @default(true)
+  reminderD1       Boolean   @default(true)
+
+  products         Product[]
+  matches          Match[]
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model Product {
+  id         String    @id @default(cuid())
+  companyId  String
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name       String
+  itemCode   String?
+  priceMin   Int?
+  priceMax   Int?
+
+  matches    Match[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([companyId])
+}
+
+model Bid {
+  id          String    @id @default(cuid())
+  // 나라장터 공고번호+차수: dedup key for the scraper
+  bidNtceNo   String    @unique
+
+  title       String
+  agency      String
+  demandOrg   String
+  itemName    String
+  // 물품분류번호(dtilPrdctClsfcNo) 등 G2B가 매긴 품목 코드. 카테고리별로 없을 수 있음(공사 등).
+  itemCode    String?
+  estPrice    BigInt?
+  postedAt    DateTime
+  deadline    DateTime
+  docUrl      String
+  category    String    // 물품 | 용역 | 공사
+  // 낙찰방법명(sucsfbidMthdNm) 원문 — "수의시담"/"다자간수의시담" 등을 매칭에서
+  // 걸러내는 데 사용.
+  bidMethod   String?
+
+  matches     Match[]
+
+  createdAt   DateTime  @default(now())
+
+  @@index([deadline])
+  @@index([category])
+  @@index([itemName])
+}
+
+model Match {
+  id              String    @id @default(cuid())
+
+  bidId           String
+  bid             Bid       @relation(fields: [bidId], references: [id], onDelete: Cascade)
+
+  companyId       String
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  score           Float
+  matchedKeywords String[]  @default([])
+
+  notified        Boolean   @default(false)
+  muted           Boolean   @default(false)
+  dismissedAt     DateTime?
+
+  // 우리 회사가 실제로 이 공고에 입찰했는지 (나라장터 API에는 없는 정보라 수동 체크)
+  applied         Boolean   @default(false)
+  appliedAt       DateTime?
+
+  createdAt       DateTime  @default(now())
+
+  @@unique([bidId, productId])
+  @@index([companyId])
+}

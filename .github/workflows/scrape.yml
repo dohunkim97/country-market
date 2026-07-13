@@ -1,0 +1,31 @@
+name: 나라장터 스크래핑
+
+on:
+  schedule:
+    # 매일 00:00 UTC (한국시간 오전 9시)
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      hoursBack:
+        description: "몇 시간 전까지 훑을지 (비워두면 기본값 90일)"
+        required: false
+        default: ""
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Run scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
+          SCRAPE_HOURS_BACK: ${{ github.event.inputs.hoursBack || '72' }}
+        run: npm run scrape
