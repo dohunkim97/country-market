@@ -7,21 +7,41 @@ import { DDayBadge } from "@/components/DDayBadge";
 import { DetailPanel } from "@/components/DetailPanel";
 
 type SortBy = "deadline" | "newest";
+type Period = "all" | "7" | "30" | "90";
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: "all", label: "전체" },
+  { value: "7", label: "1주일" },
+  { value: "30", label: "1개월" },
+  { value: "90", label: "3개월" },
+];
 
 export default function DashboardPage() {
   const [matches, setMatches] = useState<MatchDTO[] | null>(null);
+  const [upcomingMatches, setUpcomingMatches] = useState<MatchDTO[] | null>(null);
   const [closedMatches, setClosedMatches] = useState<MatchDTO[] | null>(null);
   const [search, setSearch] = useState("");
   const [filterProduct, setFilterProduct] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [sortBy, setSortBy] = useState<SortBy>("deadline");
+  const [period, setPeriod] = useState<Period>("all");
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/matches?status=open")
+    const q = period === "all" ? "" : `&postedWithinDays=${period}`;
+    setMatches(null);
+    setUpcomingMatches(null);
+    fetch(`/api/matches?status=open${q}`)
       .then((r) => r.json())
       .then(setMatches)
       .catch(() => setMatches([]));
+    fetch(`/api/matches?status=upcoming${q}`)
+      .then((r) => r.json())
+      .then(setUpcomingMatches)
+      .catch(() => setUpcomingMatches([]));
+  }, [period]);
+
+  useEffect(() => {
     fetch("/api/matches?status=closed")
       .then((r) => r.json())
       .then(setClosedMatches)
@@ -62,31 +82,37 @@ export default function DashboardPage() {
   const urgentCount = rows.filter((r) => daysLeft(r.bid.deadline) <= 3).length;
   const selected =
     matches?.find((m) => m.id === selectedMatchId) ??
+    upcomingMatches?.find((m) => m.id === selectedMatchId) ??
     closedMatches?.find((m) => m.id === selectedMatchId) ??
     null;
 
-  function patchBothLists(updater: (m: MatchDTO) => MatchDTO, predicate: (m: MatchDTO) => boolean) {
+  function patchAllLists(updater: (m: MatchDTO) => MatchDTO, predicate: (m: MatchDTO) => boolean) {
     setMatches((prev) => (prev ? prev.map((m) => (predicate(m) ? updater(m) : m)) : prev));
+    setUpcomingMatches((prev) => (prev ? prev.map((m) => (predicate(m) ? updater(m) : m)) : prev));
     setClosedMatches((prev) => (prev ? prev.map((m) => (predicate(m) ? updater(m) : m)) : prev));
   }
 
   async function dismissMatch(id: string) {
     setMatches((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
+    setUpcomingMatches((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
     setClosedMatches((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
     if (selectedMatchId === id) setSelectedMatchId(null);
     await fetch(`/api/matches/${id}/dismiss`, { method: "POST" });
   }
 
   async function toggleMute(id: string) {
-    patchBothLists((m) => ({ ...m, muted: !m.muted }), (m) => m.id === id);
+    patchAllLists((m) => ({ ...m, muted: !m.muted }), (m) => m.id === id);
     await fetch(`/api/matches/${id}/mute`, { method: "POST" });
   }
 
   async function toggleApplied(id: string) {
-    const target = matches?.find((m) => m.id === id) ?? closedMatches?.find((m) => m.id === id);
+    const target =
+      matches?.find((m) => m.id === id) ??
+      upcomingMatches?.find((m) => m.id === id) ??
+      closedMatches?.find((m) => m.id === id);
     if (!target) return;
     const nextApplied = !target.applied;
-    patchBothLists((m) => ({ ...m, applied: nextApplied }), (m) => m.bid.id === target.bid.id);
+    patchAllLists((m) => ({ ...m, applied: nextApplied }), (m) => m.bid.id === target.bid.id);
     await fetch(`/api/matches/${id}/apply`, { method: "POST" });
   }
 
@@ -96,7 +122,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-[21px] font-bold m-0 tracking-[-0.01em]">매칭 대시보드</h1>
           <div className="text-[13px] text-text-tertiary mt-[5px]">
-            진행중인 공고 {rows.length}건 · 마감 D-3 이내{" "}
+            진행중인 공고 {rows.length}건 · 그중 마감 D-3 이내{" "}
             <span className="text-urgent font-semibold">{urgentCount}건</span>
           </div>
         </div>
@@ -109,6 +135,22 @@ export default function DashboardPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="border border-border rounded-lg px-3 py-[9px] text-[13px] w-[240px] bg-surface outline-none"
         />
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-text-muted">조회기간</span>
+          <div className="flex gap-0.5 bg-[#f1f2f4] rounded-lg p-0.5">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setPeriod(opt.value)}
+                className={`border-none text-[12.5px] font-semibold px-[10px] py-[7px] rounded-md cursor-pointer ${
+                  period === opt.value ? "bg-white text-brand" : "bg-transparent text-text-tertiary"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <select
           value={filterProduct}
           onChange={(e) => setFilterProduct(e.target.value)}
@@ -231,6 +273,95 @@ export default function DashboardPage() {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-10">
+        <h2 className="text-[16px] font-bold m-0 mb-[6px] tracking-[-0.01em]">예정 공고</h2>
+        <div className="text-[13px] text-text-tertiary mb-3">
+          공고는 났지만 아직 입찰 접수 전인 공고 {upcomingMatches?.length ?? 0}건 · 미리 준비해두세요
+        </div>
+
+        <div className="bg-surface border border-border rounded-xl overflow-x-auto">
+          <table className="w-full min-w-[1180px] border-collapse text-[13px]">
+            <thead>
+              <tr className="bg-[#f9fafb]">
+                <Th w={90}>입찰시작까지</Th>
+                <Th w={260}>공고명</Th>
+                <Th w={150}>수요기관</Th>
+                <Th w={110} align="right">추정가격</Th>
+                <Th w={130}>입찰시작일시</Th>
+                <Th w={130}>마감일시</Th>
+                <Th w={80} align="right">매칭점수</Th>
+                <Th w={130}>제품</Th>
+                <Th w={60} align="center">원문</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {upcomingMatches === null && (
+                <tr>
+                  <td colSpan={9} className="text-center text-text-muted py-10 text-[13px]">
+                    불러오는 중…
+                  </td>
+                </tr>
+              )}
+              {upcomingMatches !== null && upcomingMatches.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="text-center text-text-muted py-10 text-[13px]">
+                    예정된 공고가 없습니다.
+                  </td>
+                </tr>
+              )}
+              {upcomingMatches?.map((row) => {
+                const daysUntilStart = row.bid.bidBeginDt ? daysLeft(row.bid.bidBeginDt) : null;
+                const scorePct = Math.round(row.score * 100);
+                const isSelected = row.id === selectedMatchId;
+                return (
+                  <tr
+                    key={row.id}
+                    onClick={() => setSelectedMatchId(row.id)}
+                    className={`border-b border-border-hairline cursor-pointer ${
+                      isSelected ? "bg-brand-bg" : "bg-white"
+                    }`}
+                  >
+                    <td className="px-[14px] py-[11px] whitespace-nowrap">
+                      {daysUntilStart != null ? <DDayBadge days={daysUntilStart} /> : "—"}
+                    </td>
+                    <td className="px-[14px] py-[11px] font-medium">{row.bid.title}</td>
+                    <td className="px-[14px] py-[11px] text-text-secondary whitespace-nowrap">
+                      {row.bid.demandOrg}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2 whitespace-nowrap">
+                      {fmtPrice(row.bid.estPrice)}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-text-secondary whitespace-nowrap tabular-nums">
+                      {row.bid.bidBeginDt ? fmtDate(row.bid.bidBeginDt) : "—"}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-text-secondary whitespace-nowrap tabular-nums">
+                      {fmtDate(row.bid.deadline)}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums font-semibold text-brand whitespace-nowrap">
+                      {scorePct}%
+                    </td>
+                    <td className="px-[14px] py-[11px] text-text-secondary-2 whitespace-nowrap">
+                      {row.product.name}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-center whitespace-nowrap">
+                      <a
+                        href={row.bid.docUrl}
+                        target="_blank"
+                        rel="noopener"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-brand text-[12.5px] no-underline font-semibold"
+                      >
+                        원문
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="mt-10">

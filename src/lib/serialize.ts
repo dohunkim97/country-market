@@ -38,6 +38,7 @@ export function serializeBid(b: Bid): BidDTO {
     itemName: b.itemName,
     estPrice: b.estPrice != null ? Number(b.estPrice) : null,
     postedAt: b.postedAt.toISOString(),
+    bidBeginDt: b.bidBeginDt ? b.bidBeginDt.toISOString() : null,
     deadline: b.deadline.toISOString(),
     docUrl: b.docUrl,
     category: b.category,

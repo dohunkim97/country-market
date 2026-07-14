@@ -173,6 +173,7 @@ type MappedBid = {
   itemCode: string | null;
   estPrice: bigint | null;
   postedAt: Date;
+  bidBeginDt: Date | null;
   deadline: Date;
   docUrl: string;
   category: Category;
@@ -188,6 +189,7 @@ function mapItem(item: RawItem, category: Category): MappedBid | null {
       [pick(item, "bidClseDate"), pick(item, "bidClseTm")].filter(Boolean).join(" ")
   );
   const postedAt = parseKDate(pick(item, "bidNtceDt", "rgstDt"));
+  const bidBeginDt = parseKDate(pick(item, "bidBeginDt"));
 
   if (!bidNtceNo || !title || !deadline || !postedAt) return null;
 
@@ -218,6 +220,7 @@ function mapItem(item: RawItem, category: Category): MappedBid | null {
     itemCode,
     estPrice: estPriceNum != null ? BigInt(Math.round(estPriceNum)) : null,
     postedAt,
+    bidBeginDt,
     deadline,
     docUrl,
     category,
@@ -280,6 +283,7 @@ export async function runScrape(hoursBack = 24 * 90): Promise<ScrapeResult> {
           itemCode: bid.itemCode,
           estPrice: bid.estPrice,
           postedAt: bid.postedAt,
+          bidBeginDt: bid.bidBeginDt,
           deadline: bid.deadline,
           docUrl: bid.docUrl,
           category: bid.category,

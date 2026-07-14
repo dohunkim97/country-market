@@ -28,6 +28,7 @@ export type BidDTO = {
   itemName: string;
   estPrice: number | null;
   postedAt: string;
+  bidBeginDt: string | null;
   deadline: string;
   docUrl: string;
   category: string;

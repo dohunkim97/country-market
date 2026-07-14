@@ -62,6 +62,8 @@ model Bid {
   itemCode    String?
   estPrice    BigInt?
   postedAt    DateTime
+  // 입찰시작일시(bidBeginDt) — 이 시각 전이면 "예정 공고"(등록됐지만 아직 입찰 접수 전).
+  bidBeginDt  DateTime?
   deadline    DateTime
   docUrl      String
   category    String    // 물품 | 용역 | 공사
