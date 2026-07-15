@@ -1,19 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { YearlyReportRow } from "@/lib/types";
+import { CompanyDTO, YearlyReportRow } from "@/lib/types";
+import { fmtPrice } from "@/lib/format";
 
 export default function ReportPage() {
+  const [company, setCompany] = useState<CompanyDTO | null>(null);
+  const [productId, setProductId] = useState<string>("all");
   const [rows, setRows] = useState<YearlyReportRow[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/report")
+    fetch("/api/company")
+      .then((r) => r.json())
+      .then(setCompany);
+
+    const params = new URLSearchParams(window.location.search);
+    const initialProductId = params.get("productId");
+    if (initialProductId) setProductId(initialProductId);
+  }, []);
+
+  useEffect(() => {
+    setRows(null);
+    const q = productId === "all" ? "" : `?productId=${productId}`;
+    fetch(`/api/report${q}`)
       .then((r) => r.json())
       .then(setRows)
       .catch(() => setRows([]));
-  }, []);
+  }, [productId]);
 
-  if (!rows) {
+  if (!rows || !company) {
     return <div className="px-9 pt-8 pb-12 text-text-muted text-[13px]">불러오는 중…</div>;
   }
 
@@ -21,17 +36,32 @@ export default function ReportPage() {
   const totalApplied = rows.reduce((sum, r) => sum + r.appliedBidCount, 0);
   const totalRate = totalMatched === 0 ? 0 : (totalApplied / totalMatched) * 100;
 
+  const totalMatchedBudget = rows.reduce((sum, r) => sum + r.matchedBudget, 0);
+  const totalAppliedBudget = rows.reduce((sum, r) => sum + r.appliedBudget, 0);
+  const totalBudgetRate = totalMatchedBudget === 0 ? 0 : (totalAppliedBudget / totalMatchedBudget) * 100;
+
+  const selectedProductName =
+    productId === "all" ? "전체 제품" : company.products.find((p) => p.id === productId)?.name ?? "전체 제품";
+
   return (
     <div className="px-9 pt-8 pb-12">
-      <h1 className="text-[21px] font-bold mb-[6px] tracking-[-0.01em]">연간 리포트</h1>
-      <div className="text-[13px] text-text-tertiary mb-[22px]">
-        매칭된 공고(관심없음 포함) 대비 실제 입찰한 공고 비율 · 연도는 공고 게시일 기준
+      <div className="flex items-baseline justify-between mb-[6px]">
+        <h1 className="text-[21px] font-bold m-0 tracking-[-0.01em]">연간 리포트</h1>
+        <select
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+          className="border border-border rounded-lg px-[10px] py-[8px] text-[13px] bg-surface text-text-secondary-2"
+        >
+          <option value="all">전체 제품</option>
+          {company.products.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
       </div>
-
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        <StatTile label="누적 매칭 공고" value={`${totalMatched.toLocaleString("ko-KR")}건`} />
-        <StatTile label="누적 입찰 건수" value={`${totalApplied.toLocaleString("ko-KR")}건`} />
-        <StatTile label="전체 입찰률" value={`${totalRate.toFixed(1)}%`} accent />
+      <div className="text-[13px] text-text-tertiary mb-[22px]">
+        {selectedProductName} · 매칭된 공고(관심없음 포함) 대비 실제 입찰한 공고 비율 · 연도는 공고 게시일 기준
       </div>
 
       {rows.length === 0 ? (
@@ -40,41 +70,86 @@ export default function ReportPage() {
         </div>
       ) : (
         <>
-          <div className="bg-surface border border-border rounded-xl px-6 pt-6 pb-4 mb-6">
-            <div className="text-[13px] font-bold text-text-secondary-2 mb-5">연도별 입찰률</div>
-            <YearlyBarChart rows={rows} />
+          <div className="text-[13px] font-bold text-text-secondary-2 mb-[10px]">건수 기준</div>
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <StatTile label="누적 매칭 공고" value={`${totalMatched.toLocaleString("ko-KR")}건`} />
+            <StatTile label="누적 입찰 건수" value={`${totalApplied.toLocaleString("ko-KR")}건`} />
+            <StatTile label="전체 입찰률" value={`${totalRate.toFixed(1)}%`} accent />
           </div>
 
-          <div className="bg-surface border border-border rounded-xl overflow-hidden">
-            <table className="w-full border-collapse text-[13px]">
+          <div className="bg-surface border border-border rounded-xl px-6 pt-6 pb-4 mb-8">
+            <div className="text-[13px] font-bold text-text-secondary-2 mb-5">연도별 입찰률 (건수)</div>
+            <YearlyBarChart
+              rows={rows}
+              valueOf={(r) => r.appliedRate}
+              tooltipOf={(r) => `매칭 ${r.matchedBidCount}건 중 입찰 ${r.appliedBidCount}건`}
+            />
+          </div>
+
+          <div className="text-[13px] font-bold text-text-secondary-2 mb-[10px]">예산(추정가격) 기준</div>
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <StatTile label="누적 매칭 예산" value={fmtPrice(totalMatchedBudget)} />
+            <StatTile label="누적 입찰 예산" value={fmtPrice(totalAppliedBudget)} />
+            <StatTile label="예산 기준 입찰률" value={`${totalBudgetRate.toFixed(1)}%`} accent />
+          </div>
+
+          <div className="bg-surface border border-border rounded-xl px-6 pt-6 pb-4 mb-6">
+            <div className="text-[13px] font-bold text-text-secondary-2 mb-5">연도별 입찰률 (예산)</div>
+            <YearlyBarChart
+              rows={rows}
+              valueOf={(r) => r.appliedBudgetRate}
+              tooltipOf={(r) => `매칭 예산 ${fmtPrice(r.matchedBudget)} 중 입찰 ${fmtPrice(r.appliedBudget)}`}
+            />
+          </div>
+
+          <div className="bg-surface border border-border rounded-xl overflow-x-auto">
+            <table className="w-full min-w-[820px] border-collapse text-[13px]">
               <thead>
                 <tr className="bg-[#f9fafb]">
-                  <th className="text-left px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border">
+                  <th className="text-left px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
                     연도
                   </th>
-                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border">
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
                     매칭 공고
                   </th>
-                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border">
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
                     입찰 건수
                   </th>
-                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border">
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
                     입찰률
+                  </th>
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
+                    매칭 예산
+                  </th>
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
+                    입찰 예산
+                  </th>
+                  <th className="text-right px-[14px] py-[10px] text-[11.5px] text-text-tertiary font-semibold border-b border-border whitespace-nowrap">
+                    예산 입찰률
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {[...rows].reverse().map((r) => (
                   <tr key={r.year} className="border-b border-border-hairline last:border-b-0">
-                    <td className="px-[14px] py-[11px] font-medium">{r.year}년</td>
-                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2">
+                    <td className="px-[14px] py-[11px] font-medium whitespace-nowrap">{r.year}년</td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2 whitespace-nowrap">
                       {r.matchedBidCount.toLocaleString("ko-KR")}건
                     </td>
-                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2">
+                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2 whitespace-nowrap">
                       {r.appliedBidCount.toLocaleString("ko-KR")}건
                     </td>
-                    <td className="px-[14px] py-[11px] text-right tabular-nums font-semibold text-brand">
+                    <td className="px-[14px] py-[11px] text-right tabular-nums font-semibold text-brand whitespace-nowrap">
                       {r.appliedRate.toFixed(1)}%
+                    </td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2 whitespace-nowrap">
+                      {fmtPrice(r.matchedBudget)}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums text-text-secondary-2 whitespace-nowrap">
+                      {fmtPrice(r.appliedBudget)}
+                    </td>
+                    <td className="px-[14px] py-[11px] text-right tabular-nums font-semibold text-brand whitespace-nowrap">
+                      {r.appliedBudgetRate.toFixed(1)}%
                     </td>
                   </tr>
                 ))}
@@ -109,7 +184,15 @@ function StatTile({
 const GRID_STEPS = [0, 25, 50, 75, 100];
 const PLOT_HEIGHT = 200;
 
-function YearlyBarChart({ rows }: { rows: YearlyReportRow[] }) {
+function YearlyBarChart({
+  rows,
+  valueOf,
+  tooltipOf,
+}: {
+  rows: YearlyReportRow[];
+  valueOf: (r: YearlyReportRow) => number;
+  tooltipOf: (r: YearlyReportRow) => string;
+}) {
   return (
     <div className="flex">
       <div
@@ -132,25 +215,25 @@ function YearlyBarChart({ rows }: { rows: YearlyReportRow[] }) {
           ))}
 
           <div className="absolute inset-0 flex items-end justify-around gap-2 px-2">
-            {rows.map((r) => (
-              <div key={r.year} className="group relative flex flex-col items-center h-full justify-end">
-                <span className="text-[11.5px] font-semibold text-text-secondary-2 mb-1">
-                  {r.appliedRate.toFixed(0)}%
-                </span>
-                <div
-                  className="w-6 rounded-t-[4px] bg-brand transition-[filter] group-hover:brightness-110"
-                  style={{ height: `${Math.max(r.appliedRate, 1.5)}%` }}
-                />
-
-                <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block whitespace-nowrap rounded-md bg-[#111827] px-2.5 py-1.5 text-[12px] text-white shadow-lg z-10">
-                  <span className="font-semibold">{r.appliedRate.toFixed(1)}%</span>
-                  <span className="text-[#9ca3af]">
-                    {" "}
-                    · 매칭 {r.matchedBidCount}건 중 입찰 {r.appliedBidCount}건
+            {rows.map((r) => {
+              const value = valueOf(r);
+              return (
+                <div key={r.year} className="group relative flex flex-col items-center h-full justify-end">
+                  <span className="text-[11.5px] font-semibold text-text-secondary-2 mb-1">
+                    {value.toFixed(0)}%
                   </span>
+                  <div
+                    className="w-6 rounded-t-[4px] bg-brand transition-[filter] group-hover:brightness-110"
+                    style={{ height: `${Math.max(value, 1.5)}%` }}
+                  />
+
+                  <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block whitespace-nowrap rounded-md bg-[#111827] px-2.5 py-1.5 text-[12px] text-white shadow-lg z-10">
+                    <span className="font-semibold">{value.toFixed(1)}%</span>
+                    <span className="text-[#9ca3af]"> · {tooltipOf(r)}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

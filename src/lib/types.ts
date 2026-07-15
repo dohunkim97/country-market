@@ -52,4 +52,7 @@ export type YearlyReportRow = {
   matchedBidCount: number;
   appliedBidCount: number;
   appliedRate: number; // 0~100
+  matchedBudget: number; // 매칭된 공고 추정가격 합계(원)
+  appliedBudget: number; // 그중 입찰함으로 표시된 공고 추정가격 합계(원)
+  appliedBudgetRate: number; // 0~100
 };

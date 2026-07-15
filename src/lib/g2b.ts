@@ -23,12 +23,17 @@ const DEBUG_RAW = process.env.G2B_DEBUG === "1";
 const UPSERT_CONCURRENCY = 20;
 
 /**
- * The API rejects a single request spanning more than ~30 days with
- * resultCode "07" (입력범위값 초과 에러) — confirmed empirically (45 days fails,
- * 30 days succeeds). Stay a little under that so a wider `hoursBack` still
- * works, split into sequential chunks.
+ * The API rejects a request with resultCode "07" (입력범위값 초과 에러) once a
+ * window has "too much" data — this is NOT a fixed day-count (a 29-day window
+ * over a busy period like the Q1 fiscal-year budget rush fails while the same
+ * 29 days elsewhere succeeds; even a 30-day window can succeed if it's quiet).
+ * So chunk to a calendar-safe default, but auto-bisect+retry on a "07" — see
+ * `Resultcode07Error`/`fetchCategoryAdaptive`.
  */
 const MAX_CHUNK_HOURS = 24 * 29;
+const MIN_SPLIT_HOURS = 6; // give up bisecting below this and just record the error
+
+class Resultcode07Error extends Error {}
 
 type RawItem = Record<string, unknown>;
 
@@ -114,16 +119,14 @@ async function fetchCategory(
     // or it silently looks like "0 items" instead of an error.
     const errorHeader = json?.["nkoneps.com.response.ResponseError"]?.header;
     if (errorHeader) {
-      throw new Error(
-        `G2B API 오류 (${category}): ${errorHeader.resultCode} ${errorHeader.resultMsg ?? ""}`
-      );
+      const msg = `G2B API 오류 (${category}, ${fmtInqryDt(bgnDt)}~${fmtInqryDt(endDt)}, page ${pageNo}): ${errorHeader.resultCode} ${errorHeader.resultMsg ?? ""}`;
+      throw errorHeader.resultCode === "07" ? new Resultcode07Error(msg) : new Error(msg);
     }
 
     const header = json?.response?.header;
     if (header && header.resultCode !== "00") {
-      throw new Error(
-        `G2B API 오류 (${category}): ${header.resultCode} ${header.resultMsg ?? ""}`
-      );
+      const msg = `G2B API 오류 (${category}, ${fmtInqryDt(bgnDt)}~${fmtInqryDt(endDt)}, page ${pageNo}): ${header.resultCode} ${header.resultMsg ?? ""}`;
+      throw header.resultCode === "07" ? new Resultcode07Error(msg) : new Error(msg);
     }
 
     const body = json?.response?.body;
@@ -162,6 +165,41 @@ function splitWindows(bgnDt: Date, endDt: Date): [Date, Date][] {
     chunkEnd = chunkStart;
   }
   return windows;
+}
+
+/**
+ * Fetches [bgnDt, endDt] for a category; on a "07" (range/volume exceeded)
+ * error, bisects the window and retries each half recursively — handles
+ * volume spikes (e.g. Q1 fiscal-year budget rush) wherever they land, instead
+ * of assuming a fixed safe day-count.
+ */
+async function fetchCategoryAdaptive(
+  category: Category,
+  bgnDt: Date,
+  endDt: Date,
+  onError: (message: string) => void
+): Promise<RawItem[]> {
+  try {
+    return await fetchCategory(category, bgnDt, endDt);
+  } catch (err) {
+    if (!(err instanceof Resultcode07Error)) {
+      onError(err instanceof Error ? err.message : String(err));
+      return [];
+    }
+
+    const spanHours = (endDt.getTime() - bgnDt.getTime()) / (60 * 60 * 1000);
+    if (spanHours <= MIN_SPLIT_HOURS) {
+      onError(err.message + " (더 이상 쪼갤 수 없어 이 구간은 건너뜀)");
+      return [];
+    }
+
+    const mid = new Date(bgnDt.getTime() + (endDt.getTime() - bgnDt.getTime()) / 2);
+    const [first, second] = await Promise.all([
+      fetchCategoryAdaptive(category, bgnDt, mid, onError),
+      fetchCategoryAdaptive(category, mid, endDt, onError),
+    ]);
+    return [...first, ...second];
+  }
 }
 
 type MappedBid = {
@@ -254,14 +292,9 @@ export async function runScrape(hoursBack = 24 * 90): Promise<ScrapeResult> {
   const errors: string[] = [];
   const mapped: MappedBid[] = [];
 
-  const results = await mapConcurrent(tasks, FETCH_CONCURRENCY, async (task) => {
-    try {
-      return await fetchCategory(task.category, task.bgn, task.end);
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-      return [] as RawItem[];
-    }
-  });
+  const results = await mapConcurrent(tasks, FETCH_CONCURRENCY, (task) =>
+    fetchCategoryAdaptive(task.category, task.bgn, task.end, (m) => errors.push(m))
+  );
 
   for (let i = 0; i < tasks.length; i++) {
     for (const item of results[i]) {
@@ -271,27 +304,35 @@ export async function runScrape(hoursBack = 24 * 90): Promise<ScrapeResult> {
   }
 
   const upserted = (
-    await mapConcurrent(mapped, UPSERT_CONCURRENCY, (bid) =>
-      prisma.bid.upsert({
-        where: { bidNtceNo: bid.bidNtceNo },
-        create: bid,
-        update: {
-          title: bid.title,
-          agency: bid.agency,
-          demandOrg: bid.demandOrg,
-          itemName: bid.itemName,
-          itemCode: bid.itemCode,
-          estPrice: bid.estPrice,
-          postedAt: bid.postedAt,
-          bidBeginDt: bid.bidBeginDt,
-          deadline: bid.deadline,
-          docUrl: bid.docUrl,
-          category: bid.category,
-          bidMethod: bid.bidMethod,
-        },
-      })
-    )
-  ).length;
+    await mapConcurrent(mapped, UPSERT_CONCURRENCY, async (bid) => {
+      try {
+        await withRetry(() =>
+          prisma.bid.upsert({
+            where: { bidNtceNo: bid.bidNtceNo },
+            create: bid,
+            update: {
+              title: bid.title,
+              agency: bid.agency,
+              demandOrg: bid.demandOrg,
+              itemName: bid.itemName,
+              itemCode: bid.itemCode,
+              estPrice: bid.estPrice,
+              postedAt: bid.postedAt,
+              bidBeginDt: bid.bidBeginDt,
+              deadline: bid.deadline,
+              docUrl: bid.docUrl,
+              category: bid.category,
+              bidMethod: bid.bidMethod,
+            },
+          })
+        );
+        return true;
+      } catch (err) {
+        errors.push(`bid upsert 실패 (${bid.bidNtceNo}): ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      }
+    })
+  ).filter(Boolean).length;
 
   const matchesCreatedOrUpdated = await recomputeMatches();
 
@@ -317,16 +358,36 @@ async function mapConcurrent<T, R>(
 }
 
 /**
+ * Long backfills (hours of upserts) occasionally hit "Connection terminated
+ * unexpectedly" from the Neon pool — retry a few times with backoff instead
+ * of letting one dropped connection crash the whole run.
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 500): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Recomputes match score/matchedKeywords for every bid x every product —
  * open AND already-closed bids, so 완료된 공고(지난 이력) also gets populated,
  * not just currently-open ones.
  */
 export async function recomputeMatches(): Promise<number> {
   const [allBids, products] = await Promise.all([
-    prisma.bid.findMany({
-      where: { OR: [{ bidMethod: null }, { NOT: { bidMethod: { contains: "수의시담" } } }] },
-    }),
-    prisma.product.findMany(),
+    withRetry(() =>
+      prisma.bid.findMany({
+        where: { OR: [{ bidMethod: null }, { NOT: { bidMethod: { contains: "수의시담" } } }] },
+      })
+    ),
+    withRetry(() => prisma.product.findMany()),
   ]);
 
   const hits: { bid: (typeof allBids)[number]; product: (typeof products)[number]; result: NonNullable<ReturnType<typeof computeMatch>> }[] = [];
@@ -341,34 +402,38 @@ export async function recomputeMatches(): Promise<number> {
   }
 
   await mapConcurrent(hits, UPSERT_CONCURRENCY, ({ bid, product, result }) =>
-    prisma.match.upsert({
-      where: { bidId_productId: { bidId: bid.id, productId: product.id } },
-      create: {
-        bidId: bid.id,
-        productId: product.id,
-        companyId: product.companyId,
-        score: result.score,
-        matchedKeywords: result.matchedKeywords,
-      },
-      update: {
-        score: result.score,
-        matchedKeywords: result.matchedKeywords,
-      },
-    })
+    withRetry(() =>
+      prisma.match.upsert({
+        where: { bidId_productId: { bidId: bid.id, productId: product.id } },
+        create: {
+          bidId: bid.id,
+          productId: product.id,
+          companyId: product.companyId,
+          score: result.score,
+          matchedKeywords: result.matchedKeywords,
+        },
+        update: {
+          score: result.score,
+          matchedKeywords: result.matchedKeywords,
+        },
+      })
+    )
   );
 
   // Prune matches that no longer qualify (e.g. the product was renamed away
   // from a term the bid contains).
   const hitKeys = new Set(hits.map((h) => `${h.bid.id}:${h.product.id}`));
-  const existing = await prisma.match.findMany({
-    where: { productId: { in: products.map((p) => p.id) } },
-    select: { id: true, bidId: true, productId: true },
-  });
+  const existing = await withRetry(() =>
+    prisma.match.findMany({
+      where: { productId: { in: products.map((p) => p.id) } },
+      select: { id: true, bidId: true, productId: true },
+    })
+  );
   const staleIds = existing
     .filter((m) => !hitKeys.has(`${m.bidId}:${m.productId}`))
     .map((m) => m.id);
   if (staleIds.length > 0) {
-    await prisma.match.deleteMany({ where: { id: { in: staleIds } } });
+    await withRetry(() => prisma.match.deleteMany({ where: { id: { in: staleIds } } }));
   }
 
   return hits.length;

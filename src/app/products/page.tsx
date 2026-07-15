@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { CompanyDTO, ProductDTO } from "@/lib/types";
 import { fmtPrice } from "@/lib/format";
 import { ItemNameAutocomplete } from "@/components/ItemNameAutocomplete";
@@ -263,6 +264,12 @@ export default function ProductsPage() {
                   </span>
                 </div>
                 <div className="flex gap-2 shrink-0">
+                  <Link
+                    href={`/report?productId=${product.id}`}
+                    className="border border-border bg-surface text-text-secondary-2 text-xs font-semibold px-2.5 py-1.5 rounded-md no-underline"
+                  >
+                    리포트
+                  </Link>
                   <button
                     onClick={() => startEdit(product)}
                     className="border border-border bg-surface text-text-secondary-2 text-xs font-semibold px-2.5 py-1.5 rounded-md cursor-pointer"
